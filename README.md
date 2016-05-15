@@ -47,3 +47,11 @@ This is a proof-of-concept (hence the use of command lines). A likely
 future change is moving away from being name-specific and using docker
 container labels only to determine our control plane, as this is much
 less intrusive.
+
+## Productionizing feature-list
+* How to handle lookup failures?
+  * Probably treat as a stall condition - do nothing until a look up
+    we get a solid series of responses from the server.
+* How to handle docker failures?
+  * Probably we'll just keep trying till we succeed. Either docker
+    repairs itself, or someone notices the node is really broken.

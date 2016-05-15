@@ -34,3 +34,16 @@ discovery options (say, DNS-based)
 ```
 txt-record=etcd.containers.docker.will-desktop,"quay.io/coreos/etcd --discovery-srv will-desktop --initial-advertise-peer-urls http://will-desktop:2380 --initial-cluster-token will-desktop-cluster-1 --initial-cluster-state new --advertise-client-urls http://will-desktop:2379 --listen-client-urls http://will-desktop:2379 --listen-peer-urls http://will-desktop:2380"
 ```
+
+## Internal management
+Container names are king - if a name is specified in DNS, it is assumed
+we are to take control of it's configuration. Beyond that, management
+of additional containers is based off docker labels - the label
+`docker-dns-provision.command` is treated as a marker for whether
+extraneous containers should be removed.
+
+# Work-in-progress
+This is a proof-of-concept (hence the use of command lines). A likely
+future change is moving away from being name-specific and using docker
+container labels only to determine our control plane, as this is much
+less intrusive.

@@ -66,24 +66,85 @@ func main() {
 
 	log.Infoln("DNS specifies containers:", containers)
 
-	for _, containerName := range containers {
+	// First check for any containers which definitely should be removed (no
+	// longer specified in DNS)
+	namesOut, err := exec.Command(*dockerCmd, "ps", "-a", "--format", "{{ .Names }}" ,"-f",
+		"label=docker-dns-provision.command").Output()
+	if err != nil {
+		log.Errorln("Failed to list containers - will not attempt cleanup:", err)
+	} else {
+		presentContainers := strings.Split(string(namesOut), "\n")
+		for _, runningContainer := range presentContainers {
+			log.Debugln("Containers we have labelled found:", presentContainers)
+			if _, found := containers[runningContainer]; !found {
+				log.Infoln("Container on host managed by docker-dns-provision",
+					runningContainer, "not in provision data. Removing.")
+				exec.Command(*dockerCmd, "kill", runningContainer).Run()
+				exec.Command(*dockerCmd, "rm", runningContainer).Run()
+			}
+		}
+	}
+
+	for containerName, _ := range containers {
+		log := log.With("containerName", containerName)
+
 		commandLine := containerCommands(containerName, *prefix, *hostname)
-		if commandLine != nil {
-			cmd := exec.Command(*dockerCmd, append([]string{"run", "-d"}, commandLine...)...)
-			log.Infoln("Launching container:", containerName)
-			err := cmd.Run()
+		// Compute the b64 of this container's new command line
+		theirb64cmd := base64.StdEncoding.EncodeToString([]byte(commandLine))
+
+		if commandLine == "" {
+			// Check if container with name exists already
+			err := exec.Command(*dockerCmd, "inspect", "-f",
+				`{{index .Config.Labels "docker-dns-provision.command" }}`,
+				containerName ).Run()
 			if err != nil {
-				log.Errorln("Error starting container:", containerName)
+				log.Debugln("Container did not exist, no need to try and remove.")
+			} else {
+				log.Infoln("Removing disabled container:", containerName)
+				exec.Command(*dockerCmd, "kill", containerName).Run()
+				exec.Command(*dockerCmd, "rm", containerName).Run()
 			}
 		} else {
-			log.Infoln(containerName, "not launching: no config")
+			splitCmdLine, err := shellquote.Split(commandLine)
+			if err != nil {
+				log.Errorln("Could not split command line for container - skipping")
+				continue
+			}
+			launchCommands := append(
+				[]string{"run", "-d", "--name", containerName, "--label", "docker-dns-provision.command=" + theirb64cmd},
+				splitCmdLine...)
+			// Check if container with name exists already
+			ourb64cmd_bytes, err := exec.Command(*dockerCmd, "inspect", "-f",
+				`{{index .Config.Labels "docker-dns-provision.command" }}`,
+				containerName ).Output()
+			ourb64cmd := string(ourb64cmd_bytes) // Trim trailing white space
+			ourb64cmd = strings.Trim(ourb64cmd, "\n")
+			if err != nil {
+				// Start unconditionally
+				log.Infoln("Starting container")
+				err := exec.Command(*dockerCmd, launchCommands...).Run();
+				if err != nil {
+					log.Errorln("Error starting container:", err)
+				}
+			} else {
+				log.Debugln("Comparing command encodings:", ourb64cmd, theirb64cmd)
+				if ourb64cmd != theirb64cmd {
+					log.Infoln("Container configuration has changed - removing old container.")
+					exec.Command(*dockerCmd, "kill", containerName).Run()
+					exec.Command(*dockerCmd, "rm", containerName).Run()
+					log.Infoln("Starting container (configuration changed)")
+					exec.Command(*dockerCmd, launchCommands...).Run()
+				} else {
+					log.Debugln("Container launch config is identical: taking no action")
+				}
+			}
 		}
 	}
 }
 
 // Queries down the chain of possible hostnames and returns a map of docker
 // containers we need to query for configuration.
-func containerRecords(prefix string, hostname string, canInherit bool) []string {
+func containerRecords(prefix string, hostname string, canInherit bool) map[string]interface{} {
 	// Holds the deduplicated set of containers this host has config for
 	containers := make(map[string]interface{})
 
@@ -111,14 +172,14 @@ func containerRecords(prefix string, hostname string, canInherit bool) []string 
 		}
 	}
 
-	return stringMapKeys(containers)
+	return containers
 }
 
 // Queries down the chain of possible hostnames and returns the container launch
 // configuration as specified by DNS. Container config is single level only
 // (i.e. super-domains do not override or add to subdomains, regardless of
 // inheritance rules)
-func containerCommands(containerName string, prefix string, hostname string) []string {
+func containerCommands(containerName string, prefix string, hostname string) string {
 	// Split the hostname up into fragments
 	hostParts := strings.Split(hostname, ".")
 
@@ -133,18 +194,10 @@ func containerCommands(containerName string, prefix string, hostname string) []s
 			log.Debugln("Failed querying", dnsName, err)
 		} else {
 			log.Debugln("Lookup", dnsName, "found config", txt[0])
-			cmds, err := shellquote.Split(txt[0])
-			if err != nil {
-				log.Errorln("Could not split command line:", err)
-			} else {
-				// Store a base64 encoding of the command for command line
-				// parsing safety.
-				b64Cmd := base64.StdEncoding.EncodeToString([]byte(txt[0]))
-				return append([]string{"--name", containerName, "--label", "docker-dns-provision.command=\"" + b64Cmd + "\""}, cmds...)
-			}
+			return txt[0]
 		}
 	}
 
 	log.Infoln("Container launch disabled by missing config")
-	return nil
+	return ""
 }

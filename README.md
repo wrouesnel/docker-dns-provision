@@ -14,3 +14,23 @@ to get right - naming and DNS - to supply this information.
 
 Currently this is command line focused. In future it may move to using
 full JSON-container launch commands.
+
+## Example DNS configuration with dnsmasq
+
+We can configure to launch a set of containers like so:
+```
+txt-record=containers.docker.will-desktop,etcd
+txt-record=containers.docker.will-desktop,bash-sleeper
+txt-record=containers.docker.will-desktop,bash-echoer
+
+txt-record=etcd.containers.docker.will-desktop,"quay.io/coreos/etcd"
+txt-record=bash-sleeper.containers.docker.will-desktop,"ubuntu:wily sleep 60"
+txt-record=bash-echoerr.containers.docker.will-desktop,"ubuntu:wily echo HelloDNS!"
+```
+
+Obviously this isn't very useful - the intended purpose of this is to
+do something more useful like launch that etcd process with some
+discovery options (say, DNS-based)
+```
+txt-record=etcd.containers.docker.will-desktop,"quay.io/coreos/etcd --discovery-srv will-desktop --initial-advertise-peer-urls http://will-desktop:2380 --initial-cluster-token will-desktop-cluster-1 --initial-cluster-state new --advertise-client-urls http://will-desktop:2379 --listen-client-urls http://will-desktop:2379 --listen-peer-urls http://will-desktop:2380"
+```
